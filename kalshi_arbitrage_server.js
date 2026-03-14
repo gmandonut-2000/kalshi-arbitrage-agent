@@ -294,8 +294,3 @@ app.listen(PORT, () => {
   console.log(`🚀 Kalshi Arbitrage Agent running on port ${PORT}`);
   startKeepAlive();
 });
-```
-
-Deploy that, then hit:
-```
-https://kalshi-arbitrage-agent.onrender.com/debug-secret?secret=kalshi123
