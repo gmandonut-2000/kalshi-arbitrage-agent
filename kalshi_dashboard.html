@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>💰 Kalshi Arbitrage Agent</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;min-height:100vh;padding:20px}
+  h1{font-size:20px;color:#f8fafc;margin-bottom:4px}
+  p.sub{font-size:12px;color:#64748b;margin-bottom:20px}
+  .card{background:#1e293b;border-radius:12px;padding:16px;margin-bottom:16px}
+  .card h2{font-size:12px;color:#94a3b8;margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+  .stat{background:#0f172a;border-radius:8px;padding:12px;position:relative}
+  .stat .label{font-size:11px;color:#64748b;margin-bottom:4px}
+  .stat .val{font-size:18px;font-weight:700}
+  .stat .sub-val{font-size:10px;color:#475569;margin-top:2px}
+  .green{color:#22c55e}.red{color:#ef4444}.blue{color:#60a5fa}.purple{color:#a78bfa}.yellow{color:#f59e0b}.cyan{color:#06b6d4}.orange{color:#f97316}
+  input{width:100%;background:#0f172a;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:8px}
+  button{border:none;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:700;font-size:12px;transition:opacity .2s}
+  button:hover{opacity:.85} button:disabled{opacity:.4;cursor:not-allowed}
+  .btn-green{background:#166534;color:#22c55e;border:1px solid #22c55e}
+  .btn-red{background:#7f1d1d;color:#ef4444;border:1px solid #ef4444}
+  .btn-blue{background:#1e40af;color:#93c5fd;border:1px solid #3b82f6}
+  .btn-gray{background:#334155;color:#94a3b8}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .log-box{background:#0f172a;border-radius:8px;padding:12px;max-height:240px;overflow-y:auto;font-size:12px;font-family:monospace}
+  .log-entry{padding:3px 0;border-bottom:1px solid #1e293b;display:flex;gap:8px}
+  .log-time{color:#475569;min-width:80px;flex-shrink:0}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;padding:6px 8px;color:#64748b;border-bottom:1px solid #334155;font-size:11px}
+  td{padding:7px 8px;border-bottom:1px solid #1e293b}
+  .badge{display:inline-block;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700}
+  .badge-green{background:#166534;color:#22c55e}
+  .badge-yellow{background:#713f12;color:#fbbf24}
+  .badge-red{background:#7f1d1d;color:#ef4444}
+  .badge-blue{background:#1e3a8a;color:#93c5fd}
+  .toast{position:fixed;bottom:24px;right:24px;background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px 18px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:99}
+  .toast.show{opacity:1}
+  #login{max-width:400px;margin:80px auto}
+  #app{display:none}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+  .dot-green{background:#22c55e;box-shadow:0 0 6px #22c55e}
+  .dot-red{background:#ef4444}
+  .dot-yellow{background:#f59e0b;box-shadow:0 0 6px #f59e0b}
+  .opp-card{background:#0f172a;border-radius:8px;padding:12px;margin-bottom:8px;border-left:3px solid #22c55e}
+  .opp-title{font-size:12px;color:#cbd5e1;margin-bottom:6px;font-weight:600}
+  .opp-stats{display:flex;gap:12px;flex-wrap:wrap}
+  .opp-stat{font-size:11px;color:#64748b}
+  .opp-stat span{color:#f8fafc;font-weight:700}
+  .progress-bar{background:#0f172a;border-radius:4px;height:6px;margin-top:6px;overflow:hidden}
+  .progress-fill{height:100%;border-radius:4px;transition:width .5s}
+  .safety-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}
+  .safety-item{background:#0f172a;border-radius:8px;padding:10px;border-left:3px solid #334155}
+  .safety-item.ok{border-left-color:#22c55e}
+  .safety-item.warn{border-left-color:#f59e0b}
+  .safety-item.danger{border-left-color:#ef4444}
+  .safety-label{font-size:11px;color:#64748b;margin-bottom:2px}
+  .safety-val{font-size:13px;font-weight:700}
+  ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:#0f172a}::-webkit-scrollbar-thumb{background:#334155;border-radius:2px}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="card">
+    <h2 style="font-size:16px;color:#f8fafc;margin-bottom:16px">💰 Kalshi Arbitrage Login</h2>
+    <input type="text" id="inp-url" placeholder="Render URL (https://your-app.onrender.com)"/>
+    <input type="password" id="inp-secret" placeholder="Your AGENT_SECRET password"/>
+    <button class="btn-blue" style="width:100%" onclick="doLogin()">Connect</button>
+    <p id="login-err" style="color:#ef4444;font-size:12px;margin-top:8px;display:none"></p>
+  </div>
+</div>
+
+<div id="app">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+    <h1>💰 Kalshi Arbitrage Agent</h1>
+    <button class="btn-gray" style="font-size:11px;padding:5px 10px" onclick="doLogout()">Disconnect</button>
+  </div>
+  <p class="sub" id="url-label"></p>
+
+  <!-- Agent Control -->
+  <div class="card">
+    <h2>Agent Control</h2>
+    <div class="row">
+      <div style="font-size:13px;font-weight:700">
+        <span class="dot" id="dot"></span><span id="status-text">Checking...</span>
+      </div>
+      <button class="btn-green" id="btn-start" onclick="startAgent()" disabled>▶ Start</button>
+      <button class="btn-red"   id="btn-stop"  onclick="stopAgent()"  disabled>⏹ Stop</button>
+      <button class="btn-blue"  onclick="triggerScan()">🔍 Scan Now</button>
+      <button class="btn-gray"  onclick="fetchAll()">🔄 Refresh</button>
+    </div>
+    <p id="last-scan" style="font-size:11px;color:#475569;margin-top:10px"></p>
+  </div>
+
+  <!-- Safety Dashboard -->
+  <div class="card">
+    <h2>🛡️ Safety & Protection Status</h2>
+    <div class="safety-grid">
+      <div class="safety-item" id="safe-deposit">
+        <div class="safety-label">Deposit Protection</div>
+        <div class="safety-val">🔒 Blocked</div>
+      </div>
+      <div class="safety-item" id="safe-withdraw">
+        <div class="safety-label">Withdrawal Protection</div>
+        <div class="safety-val">🔒 Blocked</div>
+      </div>
+      <div class="safety-item ok" id="safe-maxbet">
+        <div class="safety-label">Max Bet Per Trade</div>
+        <div class="safety-val green">$1.00</div>
+      </div>
+      <div class="safety-item" id="safe-exposure">
+        <div class="safety-label">Exposure Used</div>
+        <div class="safety-val" id="safe-exposure-val">—</div>
+        <div class="progress-bar"><div class="progress-fill" id="exposure-bar" style="background:#22c55e;width:0%"></div></div>
+      </div>
+      <div class="safety-item" id="safe-balance">
+        <div class="safety-label">Account Balance</div>
+        <div class="safety-val" id="safe-balance-val">—</div>
+      </div>
+      <div class="safety-item" id="safe-blocks">
+        <div class="safety-label">Blocked Attempts</div>
+        <div class="safety-val" id="safe-blocks-val">0</div>
+      </div>
+      <div class="safety-item" id="safe-errors">
+        <div class="safety-label">Errors Logged</div>
+        <div class="safety-val" id="safe-errors-val">0</div>
+      </div>
+      <div class="safety-item ok">
+        <div class="safety-label">Trading Mode</div>
+        <div class="safety-val green">Real Money</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Performance Stats -->
+  <div class="card">
+    <h2>📊 Performance</h2>
+    <div class="grid">
+      <div class="stat"><div class="label">Balance</div><div class="val blue" id="s-balance">—</div></div>
+      <div class="stat"><div class="label">Total Scans</div><div class="val purple" id="s-scans">—</div></div>
+      <div class="stat"><div class="label">Opportunities</div><div class="val yellow" id="s-opps">—</div></div>
+      <div class="stat"><div class="label">Trades Placed</div><div class="val cyan" id="s-trades">—</div></div>
+      <div class="stat"><div class="label">Expected Profit</div><div class="val green" id="s-profit">—</div></div>
+      <div class="stat"><div class="label">Open Positions</div><div class="val" id="s-positions">—</div></div>
+    </div>
+  </div>
+
+  <!-- Live Opportunities -->
+  <div class="card">
+    <h2>🔥 Live Arbitrage Opportunities</h2>
+    <div id="opps-list"><p style="color:#64748b;font-size:13px">No opportunities found yet. Start the agent to begin scanning.</p></div>
+  </div>
+
+  <!-- Open Positions -->
+  <div class="card">
+    <h2>💼 Open Positions</h2>
+    <div id="pos-table"><p style="color:#64748b;font-size:13px">No open positions.</p></div>
+  </div>
+
+  <!-- Activity Log -->
+  <div class="card">
+    <h2>📟 Activity Log</h2>
+    <div class="log-box" id="log-box"><p style="color:#64748b">No activity yet.</p></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  let BASE="", SECRET="", timer=null;
+  const MAX_EXPOSURE_CENTS = 2000; // $20.00
+  const $=id=>document.getElementById(id);
+
+  function toast(msg,color="#22c55e"){
+    const t=$("toast"); t.textContent=msg; t.style.color=color;
+    t.classList.add("show"); setTimeout(()=>t.classList.remove("show"),3000);
+  }
+
+  async function api(path,method="GET"){
+    const sep=path.includes("?")?"&":"?";
+    const r=await fetch(`${BASE}${path}${sep}secret=${SECRET}`,{method});
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  async function doLogin(){
+    const url=$("inp-url").value.trim().replace(/\/$/,"");
+    const sec=$("inp-secret").value.trim();
+    if(!url||!sec){showErr("Enter both URL and secret.");return;}
+    BASE=url; SECRET=sec;
+    try{
+      await api("/status");
+      $("login").style.display="none";
+      $("app").style.display="block";
+      $("url-label").textContent=`Connected: ${BASE}`;
+      fetchAll();
+      timer=setInterval(fetchAll,30000);
+    }catch(e){showErr("Could not connect. Check URL and secret.");}
+  }
+
+  function doLogout(){
+    clearInterval(timer); BASE=""; SECRET="";
+    $("login").style.display="block";
+    $("app").style.display="none";
+    $("inp-secret").value="";
+  }
+
+  function showErr(m){const e=$("login-err");e.textContent=m;e.style.display="block";}
+
+  async function fetchAll(){
+    try{
+      const d=await api("/status");
+      updateControls(d.agentRunning, d.stats);
+      updateSafety(d.stats||{}, d.balance, d.exposure||0);
+      updateStats(d.stats||{}, d.balance, d.positions||[]);
+      updateOpps(d.opportunities||[]);
+      updatePositions(d.positions||[]);
+      updateLog(d.log||[]);
+    }catch(e){toast("Refresh failed","#ef4444");}
+  }
+
+  function updateControls(running, stats){
+    $("dot").className="dot "+(running?"dot-green":"dot-red");
+    $("status-text").textContent=running?"Agent Running":"Agent Stopped";
+    $("status-text").style.color=running?"#22c55e":"#ef4444";
+    $("btn-start").disabled=running;
+    $("btn-stop").disabled=!running;
+    if(stats?.lastScan){
+      $("last-scan").textContent=`Last scan: ${new Date(stats.lastScan).toLocaleTimeString()}`;
+    }
+  }
+
+  function updateSafety(stats, bal, exposureCents){
+    // Always blocked
+    $("safe-deposit").className="safety-item ok";
+    $("safe-withdraw").className="safety-item ok";
+
+    // Balance
+    const balance = bal?.balance || 0;
+    const balEl = $("safe-balance-val");
+    balEl.textContent = `$${(balance/100).toFixed(2)}`;
+    balEl.className = "safety-val " + (balance >= 100 ? "green" : "red");
+    $("safe-balance").className = "safety-item " + (balance >= 100 ? "ok" : "danger");
+
+    // Exposure
+    const exposurePct = Math.min(100, (exposureCents / MAX_EXPOSURE_CENTS) * 100);
+    const expEl = $("safe-exposure-val");
+    expEl.textContent = `$${(exposureCents/100).toFixed(2)} / $20.00`;
+    const barEl = $("exposure-bar");
+    barEl.style.width = exposurePct + "%";
+    if(exposurePct >= 80){
+      expEl.className="safety-val red";
+      barEl.style.background="#ef4444";
+      $("safe-exposure").className="safety-item danger";
+    } else if(exposurePct >= 50){
+      expEl.className="safety-val yellow";
+      barEl.style.background="#f59e0b";
+      $("safe-exposure").className="safety-item warn";
+    } else {
+      expEl.className="safety-val green";
+      barEl.style.background="#22c55e";
+      $("safe-exposure").className="safety-item ok";
+    }
+
+    // Blocked attempts
+    const blocks = stats.blockedAttempts || 0;
+    $("safe-blocks-val").textContent = blocks;
+    $("safe-blocks-val").className = "safety-val " + (blocks > 0 ? "red" : "green");
+    $("safe-blocks").className = "safety-item " + (blocks > 0 ? "danger" : "ok");
+
+    // Errors
+    const errors = stats.errors || 0;
+    $("safe-errors-val").textContent = errors;
+    $("safe-errors-val").className = "safety-val " + (errors > 0 ? "orange" : "green");
+    $("safe-errors").className = "safety-item " + (errors > 0 ? "warn" : "ok");
+  }
+
+  function updateStats(s, bal, pos){
+    $("s-balance").textContent = bal?.balance ? `$${(bal.balance/100).toFixed(2)}` : "—";
+    $("s-scans").textContent   = s.scans||0;
+    $("s-opps").textContent    = s.opportunitiesFound||0;
+    $("s-trades").textContent  = s.tradesPlaced||0;
+    const profit = s.totalProfitCents||0;
+    const pEl=$("s-profit");
+    pEl.textContent=`$${(profit/100).toFixed(2)}`;
+    pEl.className="val "+(profit>=0?"green":"red");
+    $("s-positions").textContent=pos.length;
+  }
+
+  function marginBadge(m){
+    const v=parseFloat(m);
+    if(v>=7) return `<span class="badge badge-green">${m} 🔥</span>`;
+    if(v>=5) return `<span class="badge badge-yellow">${m}</span>`;
+    return `<span class="badge badge-blue">${m}</span>`;
+  }
+
+  function updateOpps(opps){
+    const el=$("opps-list");
+    if(!opps.length){el.innerHTML='<p style="color:#64748b;font-size:13px">No opportunities right now. Agent is scanning...</p>';return;}
+    el.innerHTML=opps.map(o=>`
+      <div class="opp-card">
+        <div class="opp-title">${o.title}</div>
+        <div class="opp-stats">
+          <div class="opp-stat">Margin: ${marginBadge(o.margin)}</div>
+          <div class="opp-stat">YES: <span>${o.yesBid}¢</span></div>
+          <div class="opp-stat">NO: <span>${o.noBid}¢</span></div>
+          <div class="opp-stat">Total Cost: <span>${o.totalCost}¢</span></div>
+          <div class="opp-stat">Profit/Contract: <span class="green">+${o.profitCents}¢</span></div>
+          <div class="opp-stat">Ticker: <span style="color:#60a5fa">${o.ticker}</span></div>
+        </div>
+      </div>`).join("");
+  }
+
+  function updatePositions(pos){
+    const el=$("pos-table");
+    if(!pos.length){el.innerHTML='<p style="color:#64748b;font-size:13px">No open positions.</p>';return;}
+    el.innerHTML=`<table>
+      <thead><tr><th>Market</th><th>YES Contracts</th><th>NO Contracts</th><th>Exposure</th></tr></thead>
+      <tbody>${pos.map(p=>`<tr>
+        <td style="color:#60a5fa;font-size:11px">${p.ticker}</td>
+        <td>${p.position||0}</td>
+        <td>${p.total_traded||0}</td>
+        <td class="green">$${((p.market_exposure||0)/100).toFixed(2)}</td>
+      </tr>`).join("")}</tbody></table>`;
+  }
+
+  const logColors={scan:"#60a5fa",opportunity:"#22c55e",trade:"#f59e0b",error:"#ef4444",info:"#94a3b8"};
+
+  function updateLog(logs){
+    const box=$("log-box");
+    if(!logs.length){box.innerHTML='<p style="color:#64748b">No activity yet.</p>';return;}
+    box.innerHTML=logs.map(l=>`
+      <div class="log-entry">
+        <span class="log-time">${new Date(l.time).toLocaleTimeString()}</span>
+        <span style="color:${logColors[l.type]||"#cbd5e1"}">${l.msg}</span>
+      </div>`).join("");
+  }
+
+  async function startAgent(){
+    try{await api("/agent/start","POST");toast("✅ Agent started!");setTimeout(fetchAll,1000);}
+    catch(e){toast("Error: "+e.message,"#ef4444");}
+  }
+
+  async function stopAgent(){
+    try{await api("/agent/stop","POST");toast("⏹ Agent stopped","#f59e0b");setTimeout(fetchAll,1000);}
+    catch(e){toast("Error: "+e.message,"#ef4444");}
+  }
+
+  async function triggerScan(){
+    try{await api("/scan","POST");toast("🔍 Scan triggered!");setTimeout(fetchAll,3000);}
+    catch(e){toast("Error: "+e.message,"#ef4444");}
+  }
+
+  document.addEventListener("keydown",e=>{
+    if(e.key==="Enter"&&$("login").style.display!=="none") doLogin();
+  });
+</script>
+</body>
+</html>

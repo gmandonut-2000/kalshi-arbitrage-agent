@@ -1,0 +1,15 @@
+{
+  "name": "kalshi-arbitrage-agent",
+  "version": "1.0.0",
+  "description": "Kalshi Arbitrage Trading Agent",
+  "main": "kalshi-server.js",
+  "scripts": {
+    "start": "node kalshi-server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "axios": "^1.6.0",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5"
+  }
+}
