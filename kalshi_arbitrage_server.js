@@ -297,13 +297,3 @@ app.listen(PORT, () => {
   console.log(`🚀 Kalshi Arbitrage Agent running on port ${PORT}`);
   startKeepAlive();
 });
-```
-
-You also need to **update your Render environment variables**:
-
-- Rename `KALSHI_KEY` → `KALSHI_KEY_ID` (set it to your Key ID/UUID)
-- Rename `KALSHI_SECRET` → `KALSHI_PRIVATE_KEY` (paste your full private key, replacing all newlines with `\n`)
-
-The private key in Render should look like one long line:
-```
------BEGIN PRIVATE KEY-----\nMIIEvgIBADANBg...\n-----END PRIVATE KEY-----
