@@ -4,6 +4,7 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
 const path = require("path");
+const crypto = require("crypto");
 const app = express();
 
 app.use(express.json());
@@ -20,14 +21,6 @@ function safetyCheck(url) {
   }
 }
 
-async function safeRequest(method, url, data = null) {
-  safetyCheck(url);
-  const config = { method, url, headers: kalshiHeaders };
-  if (data) config.data = data;
-  const response = await axios(config);
-  return response.data;
-}
-
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -35,18 +28,42 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-const KALSHI_KEY    = process.env.KALSHI_KEY;
-const KALSHI_SECRET = process.env.KALSHI_SECRET;
-const AGENT_SECRET  = process.env.AGENT_SECRET;
-const BASE_URL      = "https://trading.kalshi.com/trade-api/v2";
-const MIN_MARGIN    = parseFloat(process.env.MIN_MARGIN || "0.05");
-const MAX_BET       = parseInt(process.env.MAX_BET || "100");
-const MAX_EXPOSURE  = parseInt(process.env.MAX_EXPOSURE || "2000");
+const KALSHI_KEY_ID     = process.env.KALSHI_KEY_ID;
+const KALSHI_PRIVATE_KEY = process.env.KALSHI_PRIVATE_KEY.replace(/\\n/g, "\n");
+const AGENT_SECRET      = process.env.AGENT_SECRET;
+const BASE_URL          = "https://trading.kalshi.com/trade-api/v2";
+const MIN_MARGIN        = parseFloat(process.env.MIN_MARGIN || "0.05");
+const MAX_BET           = parseInt(process.env.MAX_BET || "100");
+const MAX_EXPOSURE      = parseInt(process.env.MAX_EXPOSURE || "2000");
 
-const kalshiHeaders = {
-  "Authorization": `Bearer ${KALSHI_KEY}`,
-  "Content-Type":  "application/json",
-};
+// ── Kalshi RSA Auth ───────────────────────────────────────────
+function getKalshiHeaders(method, path) {
+  const timestamp = Date.now().toString();
+  const message = timestamp + method.toUpperCase() + path;
+  const sign = crypto.createSign("SHA256");
+  sign.update(message);
+  sign.end();
+  const signature = sign.sign(
+    { key: KALSHI_PRIVATE_KEY, padding: crypto.constants.RSA_PKCS1_PSS_PADDING },
+    "base64"
+  );
+  return {
+    "Content-Type":            "application/json",
+    "KALSHI-ACCESS-KEY":       KALSHI_KEY_ID,
+    "KALSHI-ACCESS-TIMESTAMP": timestamp,
+    "KALSHI-ACCESS-SIGNATURE": signature,
+  };
+}
+
+async function safeRequest(method, fullUrl, data = null) {
+  safetyCheck(fullUrl);
+  const urlPath = fullUrl.replace(BASE_URL, "");
+  const headers = getKalshiHeaders(method, "/trade-api/v2" + urlPath);
+  const config = { method, url: fullUrl, headers };
+  if (data) config.data = data;
+  const response = await axios(config);
+  return response.data;
+}
 
 function requireAuth(req, res, next) {
   const token = req.headers["x-agent-secret"] || req.query.secret;
@@ -81,17 +98,10 @@ function log(msg, type = "info") {
 
 function startKeepAlive() {
   const appUrl = process.env.RENDER_EXTERNAL_URL;
-  if (!appUrl) {
-    log("⚠️ RENDER_EXTERNAL_URL not set — keep alive disabled", "error");
-    return;
-  }
+  if (!appUrl) { log("⚠️ RENDER_EXTERNAL_URL not set — keep alive disabled", "error"); return; }
   pingInterval = setInterval(async () => {
-    try {
-      await axios.get(`${appUrl}/health`);
-      log("💓 Keep alive ping sent", "info");
-    } catch (e) {
-      log(`⚠️ Keep alive ping failed: ${e.message}`, "error");
-    }
+    try { await axios.get(`${appUrl}/health`); log("💓 Keep alive ping sent", "info"); }
+    catch (e) { log(`⚠️ Keep alive ping failed: ${e.message}`, "error"); }
   }, 10 * 60 * 1000);
   log("💓 Keep alive started — pinging every 10 minutes");
 }
@@ -170,16 +180,10 @@ async function scanForArbitrage() {
   stats.lastScan = new Date().toISOString();
   try {
     const exposure = await getTotalExposure();
-    if (exposure >= MAX_EXPOSURE) {
-      log(`⚠️ Max exposure reached ($${(exposure/100).toFixed(2)}). Skipping trades.`, "error");
-      return;
-    }
+    if (exposure >= MAX_EXPOSURE) { log(`⚠️ Max exposure reached. Skipping.`, "error"); return; }
     const bal = await getBalance();
     const balance = bal.balance || 0;
-    if (balance < MAX_BET) {
-      log(`⚠️ Insufficient balance ($${(balance/100).toFixed(2)}).`, "error");
-      return;
-    }
+    if (balance < MAX_BET) { log(`⚠️ Insufficient balance ($${(balance/100).toFixed(2)}).`, "error"); return; }
     const markets = await getAllMarkets();
     log(`📊 Scanning ${markets.length} open markets...`);
     const found = [];
@@ -226,7 +230,6 @@ async function executeArbitrage(opp) {
 app.get("/", (req, res) => res.send("🤖 Kalshi Arbitrage Agent is running!"));
 app.get("/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 
-// ── TEMPORARY DEBUG ROUTE — DELETE AFTER FIXING ──────────────
 app.get("/debug-secret", (req, res) => {
   res.json({
     agent_secret_set: !!process.env.AGENT_SECRET,
@@ -237,6 +240,7 @@ app.get("/debug-secret", (req, res) => {
 });
 
 app.get("/dashboard", (req, res) => res.sendFile(path.join(__dirname, "kalshi_dashboard.html")));
+
 app.get("/privacy", (req, res) => res.json({
   accesses:       ["Public market prices", "Portfolio balance", "Open positions", "Place YES/NO orders"],
   never_accesses: ["SSN", "Bank info", "Personal identity", "Password", "Withdrawals", "Deposits"],
@@ -244,12 +248,11 @@ app.get("/privacy", (req, res) => res.json({
 }));
 
 app.get("/status", requireAuth, async (req, res) => {
-  try {
-    const balance   = await getBalance();
-    const positions = await getPositions();
-    const exposure  = await getTotalExposure();
-    res.json({ agentRunning, stats, balance, positions, exposure, opportunities: opportunities.slice(0, 10), log: tradeLog.slice(0, 20) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  let balance = null, positions = [], exposure = 0;
+  try { balance = await getBalance(); } catch (e) { log(`⚠️ Balance fetch failed: ${e.message}`, "error"); }
+  try { positions = await getPositions(); } catch (e) { log(`⚠️ Positions fetch failed: ${e.message}`, "error"); }
+  try { exposure = await getTotalExposure(); } catch (e) {}
+  res.json({ agentRunning, stats, balance, positions, exposure, opportunities: opportunities.slice(0, 10), log: tradeLog.slice(0, 20) });
 });
 
 app.post("/agent/start", requireAuth, (req, res) => {
@@ -294,3 +297,13 @@ app.listen(PORT, () => {
   console.log(`🚀 Kalshi Arbitrage Agent running on port ${PORT}`);
   startKeepAlive();
 });
+```
+
+You also need to **update your Render environment variables**:
+
+- Rename `KALSHI_KEY` → `KALSHI_KEY_ID` (set it to your Key ID/UUID)
+- Rename `KALSHI_SECRET` → `KALSHI_PRIVATE_KEY` (paste your full private key, replacing all newlines with `\n`)
+
+The private key in Render should look like one long line:
+```
+-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBg...\n-----END PRIVATE KEY-----
