@@ -28,15 +28,14 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
-const KALSHI_KEY_ID     = process.env.KALSHI_KEY_ID;
-const KALSHI_PRIVATE_KEY = process.env.KALSHI_PRIVATE_KEY.replace(/\\n/g, "\n");
-const AGENT_SECRET      = process.env.AGENT_SECRET;
-const BASE_URL          = "https://trading.kalshi.com/trade-api/v2";
-const MIN_MARGIN        = parseFloat(process.env.MIN_MARGIN || "0.05");
-const MAX_BET           = parseInt(process.env.MAX_BET || "100");
-const MAX_EXPOSURE      = parseInt(process.env.MAX_EXPOSURE || "2000");
+const KALSHI_KEY_ID      = process.env.KALSHI_KEY_ID;
+const KALSHI_PRIVATE_KEY = (process.env.KALSHI_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+const AGENT_SECRET       = process.env.AGENT_SECRET;
+const BASE_URL           = "https://trading.kalshi.com/trade-api/v2";
+const MIN_MARGIN         = parseFloat(process.env.MIN_MARGIN || "0.05");
+const MAX_BET            = parseInt(process.env.MAX_BET || "100");
+const MAX_EXPOSURE       = parseInt(process.env.MAX_EXPOSURE || "2000");
 
-// ── Kalshi RSA Auth ───────────────────────────────────────────
 function getKalshiHeaders(method, path) {
   const timestamp = Date.now().toString();
   const message = timestamp + method.toUpperCase() + path;
@@ -79,6 +78,10 @@ let agentInterval = null;
 let pingInterval  = null;
 let tradeLog      = [];
 let opportunities = [];
+
+// ── Opportunity History for analysis ─────────────────────────
+let opportunityHistory = [];
+
 let stats = {
   scans:              0,
   opportunitiesFound: 0,
@@ -140,21 +143,6 @@ async function getTotalExposure() {
   return positions.reduce((sum, p) => sum + Math.abs(p.market_exposure || 0), 0);
 }
 
-async function placeOrder(marketTicker, side, count, price) {
-  if (!["yes", "no"].includes(side)) throw new Error(`🚨 BLOCKED: Invalid order side: ${side}`);
-  if (count < 1 || count > 100) throw new Error(`🚨 BLOCKED: Invalid contract count: ${count}`);
-  if (price < 1 || price > 99) throw new Error(`🚨 BLOCKED: Invalid price: ${price}`);
-  return safeRequest("POST", `${BASE_URL}/portfolio/orders`, {
-    ticker:    marketTicker,
-    action:    "buy",
-    side:      side,
-    count:     count,
-    type:      "limit",
-    yes_price: side === "yes" ? price : 100 - price,
-    no_price:  side === "no"  ? price : 100 - price,
-  });
-}
-
 function detectArbitrage(market) {
   const yesBid = market.yes_bid;
   const noBid  = market.no_bid;
@@ -164,11 +152,16 @@ function detectArbitrage(market) {
   const margin      = profitCents / 100;
   if (margin >= MIN_MARGIN) {
     return {
-      ticker: market.ticker, title: market.title,
+      ticker:      market.ticker,
+      title:       market.title,
       yesBid, noBid, totalCost, profitCents,
-      margin:    (margin * 100).toFixed(2) + "%",
-      marginRaw: margin,
-      detectedAt: new Date().toISOString(),
+      margin:      (margin * 100).toFixed(2) + "%",
+      marginRaw:   margin,
+      detectedAt:  new Date().toISOString(),
+      closeDate:   market.close_time || null,
+      // Paper trade tracking
+      wouldHaveSpent:  totalCost,
+      wouldHaveProfit: profitCents,
     };
   }
   return null;
@@ -179,55 +172,39 @@ async function scanForArbitrage() {
   stats.scans++;
   stats.lastScan = new Date().toISOString();
   try {
-    const exposure = await getTotalExposure();
-    if (exposure >= MAX_EXPOSURE) { log(`⚠️ Max exposure reached. Skipping.`, "error"); return; }
-    const bal = await getBalance();
-    const balance = bal.balance || 0;
-    if (balance < MAX_BET) { log(`⚠️ Insufficient balance ($${(balance/100).toFixed(2)}).`, "error"); return; }
     const markets = await getAllMarkets();
     log(`📊 Scanning ${markets.length} open markets...`);
+
     const found = [];
     for (const market of markets) {
       const arb = detectArbitrage(market);
-      if (arb) { found.push(arb); stats.opportunitiesFound++; log(`💰 ARBITRAGE FOUND: ${arb.title} | Margin: ${arb.margin}`, "opportunity"); }
+      if (arb) {
+        found.push(arb);
+        stats.opportunitiesFound++;
+
+        // Save to history for later analysis
+        opportunityHistory.unshift(arb);
+        if (opportunityHistory.length > 500) opportunityHistory.pop();
+
+        log(`📋 OPPORTUNITY LOGGED: ${arb.title} | Margin: ${arb.margin} | Would profit: ${arb.profitCents}¢`, "opportunity");
+      }
     }
+
     opportunities = found.sort((a, b) => b.marginRaw - a.marginRaw);
+
     if (found.length === 0) {
       log("⏸ No arbitrage opportunities found this scan.");
     } else {
-      log(`✅ Found ${found.length} opportunities. Top: ${found[0]?.title} (${found[0]?.margin})`);
-      for (const opp of found.slice(0, 3)) {
-        await executeArbitrage(opp);
-        await new Promise(r => setTimeout(r, 1000));
-      }
+      log(`✅ Found ${found.length} opportunities logged for analysis. Top: ${found[0]?.title} (${found[0]?.margin})`);
     }
+
   } catch (err) {
     stats.errors++;
-    if (err.message.includes("BLOCKED")) { stats.blockedAttempts++; log(`🚨 SAFETY BLOCK: ${err.message}`, "error"); }
-    else { log(`⚠️ Scan error: ${err.message}`, "error"); }
+    log(`⚠️ Scan error: ${err.message}`, "error");
   }
 }
 
-async function executeArbitrage(opp) {
-  try {
-    const contracts = Math.max(1, Math.floor(MAX_BET / opp.totalCost));
-    const totalCost = contracts * opp.totalCost;
-    if (totalCost > MAX_BET) { log(`⚠️ Trade cost exceeds max bet — skipping`, "error"); return; }
-    log(`🤖 Executing: ${opp.ticker} — ${contracts} YES @ ${opp.yesBid}¢ + ${contracts} NO @ ${opp.noBid}¢`);
-    await placeOrder(opp.ticker, "yes", contracts, opp.yesBid);
-    await new Promise(r => setTimeout(r, 500));
-    await placeOrder(opp.ticker, "no", contracts, opp.noBid);
-    const totalProfit = opp.profitCents * contracts;
-    stats.tradesPlaced += 2;
-    stats.totalProfitCents += totalProfit;
-    log(`✅ Done! Expected profit: $${(totalProfit/100).toFixed(2)}`, "trade");
-  } catch (err) {
-    stats.errors++;
-    log(`⚠️ Trade error on ${opp.ticker}: ${err.message}`, "error");
-  }
-}
-
-app.get("/", (req, res) => res.send("🤖 Kalshi Arbitrage Agent is running!"));
+app.get("/", (req, res) => res.send("🤖 Kalshi Arbitrage Agent (Paper Mode) is running!"));
 app.get("/health", (req, res) => res.json({ status: "ok", time: new Date().toISOString() }));
 
 app.get("/debug-secret", (req, res) => {
@@ -255,14 +232,33 @@ app.get("/status", requireAuth, async (req, res) => {
   res.json({ agentRunning, stats, balance, positions, exposure, opportunities: opportunities.slice(0, 10), log: tradeLog.slice(0, 20) });
 });
 
+// ── Analysis endpoint — review all logged opportunities ───────
+app.get("/analysis", requireAuth, (req, res) => {
+  const totalOpps     = opportunityHistory.length;
+  const totalWouldHaveSpent  = opportunityHistory.reduce((s, o) => s + o.wouldHaveSpent, 0);
+  const totalWouldHaveProfit = opportunityHistory.reduce((s, o) => s + o.wouldHaveProfit, 0);
+  const byMargin = [...opportunityHistory].sort((a, b) => b.marginRaw - a.marginRaw);
+  res.json({
+    summary: {
+      totalOpportunitiesFound: totalOpps,
+      totalWouldHaveSpentCents:  totalWouldHaveSpent,
+      totalWouldHaveProfitCents: totalWouldHaveProfit,
+      totalWouldHaveProfitDollars: (totalWouldHaveProfit / 100).toFixed(2),
+      averageMargin: totalOpps ? (opportunityHistory.reduce((s, o) => s + o.marginRaw, 0) / totalOpps * 100).toFixed(2) + "%" : "N/A",
+    },
+    topOpportunities: byMargin.slice(0, 20),
+    allOpportunities: opportunityHistory,
+  });
+});
+
 app.post("/agent/start", requireAuth, (req, res) => {
   if (agentRunning) return res.json({ msg: "Agent already running" });
   agentRunning = true;
   scanForArbitrage();
   agentInterval = setInterval(scanForArbitrage, 60 * 1000);
   startKeepAlive();
-  log("▶ Arbitrage agent started — scanning every 60 seconds");
-  res.json({ msg: "Agent started" });
+  log("▶ Paper trading agent started — scanning every 60 seconds, logging opportunities only");
+  res.json({ msg: "Agent started in paper mode" });
 });
 
 app.post("/agent/stop", requireAuth, (req, res) => {
@@ -294,6 +290,6 @@ app.use((req, res) => res.status(404).json({ error: "Route not found" }));
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`🚀 Kalshi Arbitrage Agent running on port ${PORT}`);
+  console.log(`🚀 Kalshi Arbitrage Agent (Paper Mode) running on port ${PORT}`);
   startKeepAlive();
 });
